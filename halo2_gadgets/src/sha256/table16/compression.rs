@@ -1,7 +1,7 @@
 use super::{
     super::DIGEST_SIZE,
     util::{i2lebsp, lebs2ip},
-    AssignedBits, BlockWord, SpreadInputs, SpreadVar, Table16Assignment, ROUNDS, STATE,
+    AssignedBits, SpreadInputs, SpreadVar, Table16Assignment, ROUNDS, STATE,
 };
 use halo2_proofs::{
     circuit::Layouter,
@@ -430,7 +430,7 @@ pub enum StateWord {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct CompressionConfig {
+pub struct CompressionConfig {
     lookup: SpreadInputs,
     extras: [Column<Advice>; 7],
 
@@ -455,7 +455,12 @@ pub(super) struct CompressionConfig {
 impl Table16Assignment for CompressionConfig {}
 
 impl CompressionConfig {
-    pub(super) fn configure(
+    /// Configures the compression chip.
+    ///
+    /// `lookup` is three advice columns, one for each input of the spread table.
+    ///
+    /// `extras` is additional advice columns used by the chip.
+    pub fn configure(
         meta: &mut ConstraintSystem<pallas::Base>,
         lookup: SpreadInputs,
         // Columns `a_3, ..., a_9`.
@@ -853,7 +858,7 @@ impl CompressionConfig {
 
     /// Initialize compression with a constant Initialization Vector of 32-byte words.
     /// Returns an initialized state.
-    pub(super) fn initialize_with_iv(
+    pub fn initialize_with_iv(
         &self,
         layouter: &mut impl Layouter<pallas::Base>,
         init_state: [u32; STATE],
@@ -871,7 +876,7 @@ impl CompressionConfig {
 
     /// Initialize compression with some initialized state. This could be a state
     /// output from a previous compression round.
-    pub(super) fn initialize_with_state(
+    pub fn initialize_with_state(
         &self,
         layouter: &mut impl Layouter<pallas::Base>,
         init_state: State,
@@ -888,7 +893,7 @@ impl CompressionConfig {
     }
 
     /// Given an initialized state and a message schedule, perform 64 compression rounds.
-    pub(super) fn compress(
+    pub fn compress(
         &self,
         layouter: &mut impl Layouter<pallas::Base>,
         initialized_state: State,
@@ -909,21 +914,15 @@ impl CompressionConfig {
     }
 
     /// After the final round, convert the state into the final digest.
-    pub(super) fn digest(
+    pub fn digest(
         &self,
         layouter: &mut impl Layouter<pallas::Base>,
         state: State,
-    ) -> Result<[BlockWord; DIGEST_SIZE], Error> {
-        let mut digest = [BlockWord(Some(0)); DIGEST_SIZE];
+    ) -> Result<[AssignedBits<32>; DIGEST_SIZE], Error> {
         layouter.assign_region(
             || "digest",
-            |mut region| {
-                digest = self.assign_digest(&mut region, state.clone())?;
-
-                Ok(())
-            },
-        )?;
-        Ok(digest)
+            |mut region| self.assign_digest(&mut region, state.clone()),
+        )
     }
 }
 
@@ -985,7 +984,7 @@ mod tests {
                 let digest = config.compression.digest(&mut layouter, state)?;
                 for (idx, digest_word) in digest.iter().enumerate() {
                     assert_eq!(
-                        (digest_word.0.unwrap() as u64 + IV[idx] as u64) as u32,
+                        (digest_word.value_u32().unwrap() as u64 + IV[idx] as u64) as u32,
                         super::compression_util::COMPRESSION_OUTPUT[idx]
                     );
                 }

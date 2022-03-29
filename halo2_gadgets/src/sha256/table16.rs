@@ -14,11 +14,11 @@ mod message_schedule;
 mod spread_table;
 mod util;
 
-use compression::*;
-use gates::*;
-use message_schedule::*;
-use spread_table::*;
-use util::*;
+pub use compression::*;
+pub use gates::*;
+pub use message_schedule::*;
+pub use spread_table::*;
+pub use util::*;
 
 const ROUNDS: usize = 64;
 const STATE: usize = 8;
@@ -35,7 +35,7 @@ pub(crate) const ROUND_CONSTANTS: [u32; ROUNDS] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-const IV: [u32; STATE] = [
+pub const IV: [u32; STATE] = [
     0x6a09_e667,
     0xbb67_ae85,
     0x3c6e_f372,
@@ -158,11 +158,11 @@ impl<const LEN: usize> AssignedBits<LEN> {
 }
 
 impl AssignedBits<16> {
-    fn value_u16(&self) -> Option<u16> {
+    pub fn value_u16(&self) -> Option<u16> {
         self.value().map(|v| v.into())
     }
 
-    fn assign<A, AR>(
+    pub fn assign<A, AR>(
         region: &mut Region<'_, pallas::Base>,
         annotation: A,
         column: impl Into<Column<Any>>,
@@ -193,11 +193,11 @@ impl AssignedBits<16> {
 }
 
 impl AssignedBits<32> {
-    fn value_u32(&self) -> Option<u32> {
+    pub fn value_u32(&self) -> Option<u32> {
         self.value().map(|v| v.into())
     }
 
-    fn assign<A, AR>(
+    pub fn assign<A, AR>(
         region: &mut Region<'_, pallas::Base>,
         annotation: A,
         column: impl Into<Column<Any>>,
@@ -361,7 +361,17 @@ impl Sha256Instructions<pallas::Base> for Table16Chip {
     ) -> Result<[Self::BlockWord; super::DIGEST_SIZE], Error> {
         // Copy the dense forms of the state variable chunks down to this gate.
         // Reconstruct the 32-bit dense words.
-        self.config().compression.digest(layouter, state.clone())
+        let [a, b, c, d, e, f, g, h] = self.config().compression.digest(layouter, state.clone())?;
+        Ok([
+            BlockWord(a.value_u32()),
+            BlockWord(b.value_u32()),
+            BlockWord(c.value_u32()),
+            BlockWord(d.value_u32()),
+            BlockWord(e.value_u32()),
+            BlockWord(f.value_u32()),
+            BlockWord(g.value_u32()),
+            BlockWord(h.value_u32()),
+        ])
     }
 }
 

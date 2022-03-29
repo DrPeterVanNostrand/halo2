@@ -1,4 +1,4 @@
-use super::super::{util::*, AssignedBits, BlockWord, SpreadVar, SpreadWord, Table16Assignment};
+use super::super::{util::*, AssignedBits, SpreadVar, SpreadWord, Table16Assignment};
 use super::{schedule_util::*, MessageScheduleConfig};
 use halo2_proofs::{circuit::Region, pasta::pallas, plonk::Error};
 use std::convert::TryInto;
@@ -74,7 +74,7 @@ impl MessageScheduleConfig {
     pub fn assign_subregion1(
         &self,
         region: &mut Region<'_, pallas::Base>,
-        input: &[BlockWord],
+        input: &[Option<u32>],
     ) -> Result<Vec<(AssignedBits<16>, AssignedBits<16>)>, Error> {
         assert_eq!(input.len(), SUBREGION_1_LEN);
         Ok(input
@@ -85,7 +85,7 @@ impl MessageScheduleConfig {
                 let subregion1_word = self
                     .decompose_subregion1_word(
                         region,
-                        word.0.map(|word| i2lebsp(word.into())),
+                        word.map(|word| i2lebsp(word.into())),
                         idx + 1,
                     )
                     .unwrap();

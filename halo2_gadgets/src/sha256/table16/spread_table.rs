@@ -136,27 +136,27 @@ impl<const DENSE: usize, const SPREAD: usize> SpreadVar<DENSE, SPREAD> {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SpreadInputs {
+pub struct SpreadInputs {
     pub(super) tag: Column<Advice>,
     pub(super) dense: Column<Advice>,
     pub(super) spread: Column<Advice>,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SpreadTable {
+pub struct SpreadTable {
     pub(super) tag: TableColumn,
     pub(super) dense: TableColumn,
     pub(super) spread: TableColumn,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SpreadTableConfig {
+pub struct SpreadTableConfig {
     pub input: SpreadInputs,
     pub table: SpreadTable,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct SpreadTableChip<F: FieldExt> {
+pub struct SpreadTableChip<F: FieldExt> {
     config: SpreadTableConfig,
     _marker: PhantomData<F>,
 }

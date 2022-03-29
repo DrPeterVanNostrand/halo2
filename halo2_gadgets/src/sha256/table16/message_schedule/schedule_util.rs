@@ -176,4 +176,50 @@ impl MessageScheduleConfig {
 
         Ok((word, (w_lo, w_hi)))
     }
+
+    // Copies a word into the current region and assigns its low and high 16-bit halves.
+    //
+    // Warning: the caller of this function is responsible for enabling the selector `s_decompose_0`
+    // which verifies `word`'s binary decomposition into 16-bit halves.
+    //
+    // Returns an error if `word`'s column and `a_5` are not equality constrained.
+    pub fn copy_word_and_assign_halves(
+        &self,
+        region: &mut Region<'_, pallas::Base>,
+        word: &AssignedBits<32>,
+        word_idx: usize,
+    ) -> Result<(AssignedBits<32>, (AssignedBits<16>, AssignedBits<16>)), Error> {
+        // Rename these here for ease of matching the gates to the specification.
+        let a_3 = self.extras[0];
+        let a_4 = self.extras[1];
+        let a_5 = self.message_schedule;
+
+        let row = get_word_row(word_idx);
+
+        // Copy `word` into the current region.
+        let word = word
+            .copy_advice(|| format!("W_{}", word_idx), region, a_5, row)
+            .map(AssignedBits)?;
+
+        // Allocate the low and high 16-bit halves of the copied word.
+        let word_val = word.value_u32();
+        let lo_val = word_val.map(|word| word as u16);
+        let hi_val = word_val.map(|word| (word >> 16) as u16);
+        let lo = AssignedBits::<16>::assign(
+            region,
+            || format!("W_{}_lo", word_idx),
+            a_3,
+            row,
+            lo_val,
+        )?;
+        let hi = AssignedBits::<16>::assign(
+            region,
+            || format!("W_{}_hi", word_idx),
+            a_4,
+            row,
+            hi_val,
+        )?;
+
+        Ok((word, (lo, hi)))
+    }
 }

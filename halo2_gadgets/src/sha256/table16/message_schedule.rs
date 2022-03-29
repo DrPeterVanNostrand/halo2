@@ -2,7 +2,7 @@ use std::convert::TryInto;
 
 use super::{super::BLOCK_SIZE, AssignedBits, BlockWord, SpreadInputs, Table16Assignment, ROUNDS};
 use halo2_proofs::{
-    circuit::Layouter,
+    circuit::{Layouter, Region},
     pasta::pallas,
     plonk::{Advice, Column, ConstraintSystem, Error, Selector},
     poly::Rotation,
@@ -21,7 +21,7 @@ use schedule_util::*;
 pub use schedule_util::msg_schedule_test_input;
 
 #[derive(Clone, Debug)]
-pub(super) struct MessageWord(AssignedBits<32>);
+pub struct MessageWord(AssignedBits<32>);
 
 impl std::ops::Deref for MessageWord {
     type Target = AssignedBits<32>;
@@ -32,7 +32,7 @@ impl std::ops::Deref for MessageWord {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct MessageScheduleConfig {
+pub struct MessageScheduleConfig {
     lookup: SpreadInputs,
     message_schedule: Column<Advice>,
     extras: [Column<Advice>; 6],
@@ -70,7 +70,7 @@ impl MessageScheduleConfig {
     /// gates, and will not place any constraints on (such as lookup constraints) outside
     /// itself.
     #[allow(clippy::many_single_char_names)]
-    pub(super) fn configure(
+    pub fn configure(
         meta: &mut ConstraintSystem<pallas::Base>,
         lookup: SpreadInputs,
         message_schedule: Column<Advice>,
@@ -297,7 +297,7 @@ impl MessageScheduleConfig {
     }
 
     #[allow(clippy::type_complexity)]
-    pub(super) fn process(
+    pub fn process(
         &self,
         layouter: &mut impl Layouter<pallas::Base>,
         input: [BlockWord; BLOCK_SIZE],
@@ -308,78 +308,129 @@ impl MessageScheduleConfig {
         ),
         Error,
     > {
-        let mut w = Vec::<MessageWord>::with_capacity(ROUNDS);
-        let mut w_halves = Vec::<(AssignedBits<16>, AssignedBits<16>)>::with_capacity(ROUNDS);
-
         layouter.assign_region(
             || "process message block",
             |mut region| {
-                w = Vec::<MessageWord>::with_capacity(ROUNDS);
-                w_halves = Vec::<(AssignedBits<16>, AssignedBits<16>)>::with_capacity(ROUNDS);
-
-                // Assign all fixed columns
-                for index in 1..14 {
-                    let row = get_word_row(index);
-                    self.s_decompose_1.enable(&mut region, row)?;
-                    self.s_lower_sigma_0.enable(&mut region, row + 3)?;
-                }
-
-                for index in 14..49 {
-                    let row = get_word_row(index);
-                    self.s_decompose_2.enable(&mut region, row)?;
-                    self.s_lower_sigma_0_v2.enable(&mut region, row + 3)?;
-                    self.s_lower_sigma_1_v2
-                        .enable(&mut region, row + SIGMA_0_V2_ROWS + 3)?;
-
-                    let new_word_idx = index + 2;
-                    self.s_word
-                        .enable(&mut region, get_word_row(new_word_idx - 16) + 1)?;
-                }
-
-                for index in 49..62 {
-                    let row = get_word_row(index);
-                    self.s_decompose_3.enable(&mut region, row)?;
-                    self.s_lower_sigma_1.enable(&mut region, row + 3)?;
-
-                    let new_word_idx = index + 2;
-                    self.s_word
-                        .enable(&mut region, get_word_row(new_word_idx - 16) + 1)?;
-                }
-
-                for index in 0..64 {
-                    let row = get_word_row(index);
-                    self.s_decompose_0.enable(&mut region, row)?;
-                }
+                let mut w_and_halves = Vec::<(
+                    AssignedBits<32>,
+                    (AssignedBits<16>, AssignedBits<16>),
+                )>::with_capacity(BLOCK_SIZE);
 
                 // Assign W[0..16]
                 for (i, word) in input.iter().enumerate() {
-                    let (word, halves) = self.assign_word_and_halves(&mut region, word.0, i)?;
-                    w.push(MessageWord(word));
-                    w_halves.push(halves);
+                    w_and_halves.push(self.assign_word_and_halves(&mut region, word.0, i)?);
                 }
 
-                // Returns the output of sigma_0 on W_[1..14]
-                let lower_sigma_0_output = self.assign_subregion1(&mut region, &input[1..14])?;
-
-                // sigma_0_v2 and sigma_1_v2 on W_[14..49]
-                // Returns the output of sigma_0_v2 on W_[36..49], to be used in subregion3
-                let lower_sigma_0_v2_output = self.assign_subregion2(
-                    &mut region,
-                    lower_sigma_0_output,
-                    &mut w,
-                    &mut w_halves,
-                )?;
-
-                // sigma_1 v1 on W[49..62]
-                self.assign_subregion3(
-                    &mut region,
-                    lower_sigma_0_v2_output,
-                    &mut w,
-                    &mut w_halves,
-                )?;
-
-                Ok(())
+                self.process_inner(&mut region, w_and_halves.try_into().unwrap())
             },
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn process_assigned(
+        &self,
+        layouter: &mut impl Layouter<pallas::Base>,
+        input: [AssignedBits<32>; BLOCK_SIZE],
+    ) -> Result<
+        (
+            [MessageWord; ROUNDS],
+            [(AssignedBits<16>, AssignedBits<16>); ROUNDS],
+        ),
+        Error,
+    > {
+        layouter.assign_region(
+            || "process message block",
+            |mut region| {
+                let mut w_and_halves = Vec::<(
+                    AssignedBits<32>,
+                    (AssignedBits<16>, AssignedBits<16>),
+                )>::with_capacity(BLOCK_SIZE);
+
+                // Assign W[0..16]
+                for (i, word) in input.iter().enumerate() {
+                    w_and_halves.push(self.copy_word_and_assign_halves(&mut region, word, i)?);
+                }
+
+                self.process_inner(&mut region, w_and_halves.try_into().unwrap())
+            },
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn process_inner(
+        &self,
+        region: &mut Region<'_, pallas::Base>,
+        input: [(AssignedBits<32>, (AssignedBits<16>, AssignedBits<16>)); BLOCK_SIZE],
+    ) -> Result<
+        (
+            [MessageWord; ROUNDS],
+            [(AssignedBits<16>, AssignedBits<16>); ROUNDS],
+        ),
+        Error,
+    > {
+        let mut w = Vec::<MessageWord>::with_capacity(ROUNDS);
+        let mut w_halves = Vec::<(AssignedBits<16>, AssignedBits<16>)>::with_capacity(ROUNDS);
+
+        for (word, lo_hi) in input.iter().cloned() {
+            w.push(MessageWord(word));
+            w_halves.push(lo_hi);
+        }
+
+        // Assign all fixed columns
+        for index in 1..14 {
+            let row = get_word_row(index);
+            self.s_decompose_1.enable(region, row)?;
+            self.s_lower_sigma_0.enable(region, row + 3)?;
+        }
+
+        for index in 14..49 {
+            let row = get_word_row(index);
+            self.s_decompose_2.enable(region, row)?;
+            self.s_lower_sigma_0_v2.enable(region, row + 3)?;
+            self.s_lower_sigma_1_v2
+                .enable(region, row + SIGMA_0_V2_ROWS + 3)?;
+
+            let new_word_idx = index + 2;
+            self.s_word
+                .enable(region, get_word_row(new_word_idx - 16) + 1)?;
+        }
+
+        for index in 49..62 {
+            let row = get_word_row(index);
+            self.s_decompose_3.enable(region, row)?;
+            self.s_lower_sigma_1.enable(region, row + 3)?;
+
+            let new_word_idx = index + 2;
+            self.s_word
+                .enable(region, get_word_row(new_word_idx - 16) + 1)?;
+        }
+
+        for index in 0..64 {
+            let row = get_word_row(index);
+            self.s_decompose_0.enable(region, row)?;
+        }
+
+        // Returns the output of sigma_0 on W_[1..14]
+        let lower_sigma_0_output = self.assign_subregion1(
+            region,
+            &w[1..14].iter().map(|word| word.value_u32()).collect::<Vec<Option<u32>>>(),
+        )?;
+
+        // sigma_0_v2 and sigma_1_v2 on W_[14..49]
+        // Returns the output of sigma_0_v2 on W_[36..49], to be used in subregion3
+        let lower_sigma_0_v2_output = self.assign_subregion2(
+            region,
+            lower_sigma_0_output,
+            &mut w,
+            &mut w_halves,
+        )?;
+
+        // sigma_1 v1 on W[49..62]
+        self.assign_subregion3(
+            region,
+            lower_sigma_0_v2_output,
+            &mut w,
+            &mut w_halves,
         )?;
 
         Ok((w.try_into().unwrap(), w_halves.try_into().unwrap()))
